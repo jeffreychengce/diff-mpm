@@ -152,6 +152,8 @@ class MPMExplicit:
                 result["velocity"].append(pset.velocity)
                 result["stress"].append(pset.stress[:, :2, 0])
                 result["strain"].append(pset.strain[:, :2, 0])
+            print(step)
+            result["nodal_velocity"].append(self.mesh.elements.nodes.velocity)
 
         result_arr = {k: jnp.asarray(v) for k, v in result.items()}
         return result_arr
@@ -193,6 +195,7 @@ class MPMExplicit:
                             for j in range(len(self.mesh.particles))
                         ]
                     )
+                arrays['nodal_velocity'] = self.mesh.elements.nodes.velocity
                 self._jax_writer(
                     functools.partial(
                         self.writer_func, out_dir=self.out_dir, max_steps=self.sim_steps
@@ -219,4 +222,5 @@ class MPMExplicit:
                     for j in range(len(self.mesh.particles))
                 ]
             ).squeeze()
+        arrays['nodal_velocity'] = self.mesh.elements.nodes.velocity
         return arrays
