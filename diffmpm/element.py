@@ -907,3 +907,379 @@ class Quadrilateral4Node(_Element):
         p = q = jnp.sqrt(a**2 + b**2)
         vol = 0.25 * jnp.sqrt(4 * p * p * q * q - (a * a + c * c - b * b - d * d) ** 2)
         self.volume = self.volume.at[:].set(vol)
+
+@register_pytree_node_class
+class Hexahedron8Node(_Element):
+    r"""Container for 3D hexahedron elements with 8 nodes.
+
+    Nodes and elements are numbered as
+
+
+
+    where
+
+            + : Nodes
+            +---+
+            |   | : An element
+            +---+
+    """
+
+    def __init__(
+        self,
+        nelements: int,
+        total_elements: int,
+        el_len: float,
+        constraints: Sequence[Tuple[ArrayLike, Constraint]],
+        nodes: Optional[Nodes] = None,
+        concentrated_nodal_forces: Sequence = [],
+        initialized: Optional[bool] = None,
+        volume: Optional[ArrayLike] = None,
+    ) -> None:
+        """Initialize Hexahedron8Node.
+
+        Parameters
+        ----------
+        nelements : int
+            Number of elements.
+        total_elements : int
+            Total number of elements (product of all elements of `nelements`)
+        el_len : float
+            Length of each element.
+        constraints: list
+            A list of constraints where each element is a tuple of
+            type `(node_ids, diffmpm.Constraint)`. Here, `node_ids`
+            correspond to the node IDs where `diffmpm.Constraint`
+            should be applied.
+        nodes : Nodes, Optional
+            Nodes in the element object.
+        concentrated_nodal_forces: list
+            A list of `diffmpm.forces.NodalForce`s that are to be
+            applied.
+        initialized: bool, None
+            `True` if the class has been initialized, `None` if not.
+            This is required like this for using JAX flattening.
+        volume: ArrayLike
+            Volume of the elements.
+        """
+        self.nelements = jnp.asarray(nelements)
+        self.el_len = jnp.asarray(el_len)
+        self.total_elements = total_elements
+
+        if nodes is None:
+            total_nodes = jnp.prod(self.nelements + 1)
+            coords = jnp.asarray(
+                list(
+                    itertools.product(
+                        jnp.arange(self.nelements[2] + 1),
+                        jnp.arange(self.nelements[1] + 1),
+                        jnp.arange(self.nelements[0] + 1),
+                    )
+                )
+            )
+            node_locations = (
+                jnp.asarray(
+                    [
+                    coords[:, 2], 
+                    coords[:, 1], 
+                    coords[:, 0]
+                    ]
+                ).T * self.el_len
+            ).reshape(-1, 1, 3)
+            self.nodes = Nodes(int(total_nodes), node_locations)
+        else:
+            self.nodes = nodes
+
+        self.constraints = constraints
+        self.concentrated_nodal_forces = concentrated_nodal_forces
+        if initialized is None:
+            self.volume = jnp.ones((self.total_elements, 1, 1))
+        else:
+            self.volume = jnp.asarray(volume)
+        self.initialized = True
+
+    def id_to_node_ids(self, id: ArrayLike):
+        """Node IDs corresponding to element `id`.
+
+        The nodes are numbered as follows:
+
+                   7--------6
+                  /|       /|
+                 / |      / |
+                4--------5  |
+                |  3-----|--2
+                | /      | /
+                |/       |/
+                0--------1
+
+
+        Node ids are returned in the order as shown in the figure.
+
+        Parameters
+        ----------
+        id : int
+            Element ID.
+
+        Returns
+        -------
+        ArrayLike
+            Nodal IDs of the element. Shape of returned
+            array is (8, 1)
+        """
+        nx, ny, nz = self.nelements
+        z = id // (nx * ny)
+        j = (id % (nx * ny)) // nx
+        i = id % nx
+        base_id = z * (nx + 1) * (ny + 1) + j * (nx + 1) + i
+        result = jnp.asarray(
+            [
+                base_id,
+                base_id + 1,
+                base_id + nx + 2,
+                base_id + nx + 1,
+                base_id + (nx + 1) * (ny + 1),
+                base_id + (nx + 1) * (ny + 1) + 1,
+                base_id + (nx + 1) * (ny + 1) + nx + 2,
+                base_id + (nx + 1) * (ny + 1) + nx + 1
+            ]
+        )
+        return result.reshape(8, 1)
+
+    def shapefn(self, xi: ArrayLike):
+        """Evaluate linear shape function.
+
+        Parameters
+        ----------
+        xi : float, array_like
+            Locations of particles in natural coordinates to evaluate
+            the function at. Expected shape is (npoints, 1, ndim)
+
+        Returns
+        -------
+        array_like
+            Evaluated shape function values. The shape of the returned
+            array will depend on the input shape. For example, in the linear
+            case, if the input is a scalar, the returned array will be of
+            the shape `(1, 8, 1)` but if the input is a vector then the output will
+            be of the shape `(len(x), 8, 1)`.
+        """
+        xi = jnp.asarray(xi)
+        if xi.ndim != 3:
+            raise ValueError(
+                f"`xi` should be of size (npoints, 1, ndim); found {xi.shape}"
+            )
+        result = jnp.array(
+            [
+                0.125 * (1 - xi[:, :, 0]) * (1 - xi[:, :, 1]) * (1 - xi[:, :, 2]),
+                0.125 * (1 + xi[:, :, 0]) * (1 - xi[:, :, 1]) * (1 - xi[:, :, 2]),
+                0.125 * (1 + xi[:, :, 0]) * (1 + xi[:, :, 1]) * (1 - xi[:, :, 2]),
+                0.125 * (1 - xi[:, :, 0]) * (1 + xi[:, :, 1]) * (1 - xi[:, :, 2]),
+                0.125 * (1 - xi[:, :, 0]) * (1 - xi[:, :, 1]) * (1 + xi[:, :, 2]),
+                0.125 * (1 + xi[:, :, 0]) * (1 - xi[:, :, 1]) * (1 + xi[:, :, 2]),
+                0.125 * (1 + xi[:, :, 0]) * (1 + xi[:, :, 1]) * (1 + xi[:, :, 2]),
+                0.125 * (1 - xi[:, :, 0]) * (1 + xi[:, :, 1]) * (1 + xi[:, :, 2]),
+            ]
+        )
+        result = result.transpose(1, 0, 2)[..., jnp.newaxis]
+        # print('result shape fn: ', result)
+        return result
+
+    def _shapefn_natural_grad(self, xi: ArrayLike):
+        """Calculate the gradient of shape function.
+
+        This calculation is done in the natural coordinates.
+
+        Parameters
+        ----------
+        x : float, array_like
+            Locations of particles in natural coordinates to evaluate
+            the function at.
+
+        Returns
+        -------
+        array_like
+            Evaluated gradient values of the shape function. The shape of
+            the returned array will depend on the input shape. For example,
+            in the linear case, if the input is a scalar, the returned array
+            will be of the shape `(4, 2)`.
+        """
+        # result = vmap(jacobian(self.shapefn))(xi[..., jnp.newaxis]).squeeze()
+        xi = jnp.asarray(xi)
+        xi = xi.squeeze()
+        
+        result = jnp.array(
+            [
+                [
+                    -0.125 * (1 - xi[1]) * (1 - xi[2]),
+                    -0.125 * (1 - xi[0]) * (1 - xi[2]),
+                    -0.125 * (1 - xi[0]) * (1 - xi[1])
+                ],
+                [
+                     0.125 * (1 - xi[1]) * (1 - xi[2]),
+                    -0.125 * (1 + xi[0]) * (1 - xi[2]),
+                    -0.125 * (1 + xi[0]) * (1 - xi[1])
+                ],
+                [
+                     0.125 * (1 + xi[1]) * (1 - xi[2]),
+                     0.125 * (1 + xi[0]) * (1 - xi[2]),
+                    -0.125 * (1 + xi[0]) * (1 + xi[1])
+                ],
+                [
+                    -0.125 * (1 + xi[1]) * (1 - xi[2]),
+                     0.125 * (1 - xi[0]) * (1 - xi[2]),
+                    -0.125 * (1 - xi[0]) * (1 + xi[1])
+                ],
+                [
+                    -0.125 * (1 - xi[1]) * (1 + xi[2]),
+                    -0.125 * (1 - xi[0]) * (1 + xi[2]),
+                     0.125 * (1 - xi[0]) * (1 - xi[1])
+                ],
+                [
+                     0.125 * (1 - xi[1]) * (1 + xi[2]),
+                    -0.125 * (1 + xi[0]) * (1 + xi[2]),
+                     0.125 * (1 + xi[0]) * (1 - xi[1])
+                ],
+                [
+                    0.125 * (1 + xi[1]) * (1 + xi[2]),
+                    0.125 * (1 + xi[0]) * (1 + xi[2]),
+                    0.125 * (1 + xi[0]) * (1 + xi[1])
+                ],
+                [
+                    -0.125 * (1 + xi[1]) * (1 + xi[2]),
+                     0.125 * (1 - xi[0]) * (1 + xi[2]),
+                     0.125 * (1 - xi[0]) * (1 + xi[1])
+                ]
+            ]
+        )
+        return result
+
+    def shapefn_grad(self, xi: ArrayLike, coords: ArrayLike):
+        """Gradient of shape function in physical coordinates.
+
+        Parameters
+        ----------
+        xi : float, array_like
+            Locations of particles to evaluate in natural coordinates.
+            Expected shape `(npoints, 1, ndim)`.
+        coords : array_like
+            Nodal coordinates to transform by. Expected shape
+            `(npoints, 1, ndim)`
+
+        Returns
+        -------
+        array_like
+            Gradient of the shape function in physical coordinates at `xi`
+        """
+        xi = jnp.asarray(xi)
+        coords = jnp.asarray(coords)
+        if xi.ndim != 3:
+            raise ValueError(
+                f"`x` should be of size (npoints, 1, ndim); found {xi.shape}"
+            )
+        grad_sf = self._shapefn_natural_grad(xi)
+        _jacobian = grad_sf.T @ coords.squeeze()
+
+        result = grad_sf @ jnp.linalg.inv(_jacobian).T
+        return result
+
+    def set_particle_element_ids(self, particles: Particles):
+        """Set the element IDs for the particles.
+
+        If the particle doesn't lie between the boundaries of any
+        element, it sets the element index to -1.
+        """
+
+        @jit
+        def f(x):
+            xidl = (self.nodes.loc[:, :, 0] <= x[0, 0]).nonzero(
+                size=len(self.nodes.loc), fill_value=-1
+            )[0]
+            yidl = (self.nodes.loc[:, :, 1] <= x[0, 1]).nonzero(
+                size=len(self.nodes.loc), fill_value=-1
+            )[0]
+            zidl = (self.nodes.loc[:, :, 2] <= x[0, 2]).nonzero(
+                size=len(self.nodes.loc), fill_value=-1
+            )[0]
+            combined_x_y = jnp.logical_and(xidl >= 0, yidl >= 0) * xidl
+            combined_idl = jnp.logical_and(combined_x_y >= 0, zidl >= 0) * combined_x_y
+            is_non_empty = jnp.any(combined_idl >= 0)
+            element_id = (
+                combined_idl // (self.nelements[0] + 1)
+            ) * self.nelements[1] + (combined_idl % (self.nelements[0] + 1))
+            element_id = jnp.where(is_non_empty, element_id[0], -1)
+            return element_id
+
+        ids = vmap(f)(particles.loc)
+        particles.element_ids = ids
+
+    def compute_internal_force(self, particles: Particles):
+        r"""Update the nodal internal force based on particle mass.
+
+        The nodal force is updated as a sum of internal forces for
+        all particles mapped to the node.
+
+        \[
+            (f_{int})_i = -\sum_p V_p \sigma_p \nabla N_i(x_p)
+        \]
+
+        where \(\sigma_p\) is the stress at particle \(p\).
+
+        Parameters
+        ----------
+        particles: diffmpm.particle.Particles
+            Particles to map to the nodal values.
+        """
+
+        def _step(pid, args):
+            (
+                f_int,
+                pvol,
+                mapped_grads,
+                el_nodes,
+                pstress,
+            ) = args
+            force = jnp.zeros((mapped_grads.shape[1], 1, 3))
+            force = force.at[:, 0, 0].set(
+                mapped_grads[pid][:, 0] * pstress[pid][0]
+                + mapped_grads[pid][:, 1] * pstress[pid][3]
+                + mapped_grads[pid][:, 2] * pstress[pid][5]
+            )
+            force = force.at[:, 0, 1].set(
+                mapped_grads[pid][:, 1] * pstress[pid][1]
+                + mapped_grads[pid][:, 0] * pstress[pid][3]
+                + mapped_grads[pid][:, 2] * pstress[pid][4]
+            )
+            force = force.at[:, 0, 2].set(
+                mapped_grads[pid][:, 2] * pstress[pid][2]
+                + mapped_grads[pid][:, 1] * pstress[pid][4]
+                + mapped_grads[pid][:, 0] * pstress[pid][5]
+            )
+            update = -pvol[pid] * force
+            f_int = f_int.at[el_nodes[pid]].add(update)
+            return (
+                f_int,
+                pvol,
+                mapped_grads,
+                el_nodes,
+                pstress,
+            )
+
+        self.nodes.f_int = self.nodes.f_int.at[:].set(0)
+        mapped_nodes = vmap(self.id_to_node_ids)(particles.element_ids).squeeze(-1)
+        mapped_coords = vmap(self.id_to_node_loc)(particles.element_ids).squeeze(2)
+        mapped_grads = vmap(self.shapefn_grad)(
+            particles.reference_loc[:, jnp.newaxis, ...],
+            mapped_coords,
+        )
+        args = (
+            self.nodes.f_int,
+            particles.volume,
+            mapped_grads,
+            mapped_nodes,
+            particles.stress,
+        )
+        self.nodes.f_int, _, _, _, _ = lax.fori_loop(0, len(particles), _step, args)
+
+    def compute_volume(self, *args):
+        """Compute volume of all elements."""
+        vol = jnp.prod(self.el_len)
+        self.volume = self.volume.at[:].set(vol)

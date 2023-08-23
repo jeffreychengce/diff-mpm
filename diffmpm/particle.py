@@ -204,6 +204,12 @@ class Particles(Sized):
             2 / (t[:, 2, ...] - t[:, 0, ...])
         )
         self.reference_loc = xi_coords
+        if t.shape[-1] == 3:
+            xi_coords = (2 * (self.loc[..., 0] - (t[:, 0, :, 0] + t[:, 1, :, 0]) / 2)) / (t[:, 1, :, 0] - t[:, 0, :, 0])
+            eta_coords = (2 * (self.loc[..., 1] - (t[:, 0, :, 1] + t[:, 3, :, 1]) / 2)) / (t[:, 3, :, 1] - t[:, 0, :, 1])
+            zeta_coords = (2 * (self.loc[..., 2] - (t[:, 0, :, 2] + t[:, 4, :, 2]) / 2)) / (t[:, 4, :, 2] - t[:, 0, :, 2])
+            self.reference_loc = jnp.stack([xi_coords, eta_coords, zeta_coords], axis=-1)
+        
 
     def update_position_velocity(
         self, elements: _Element, dt: float, velocity_update: bool

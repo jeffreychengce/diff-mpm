@@ -124,3 +124,19 @@ class Mesh2D(_MeshBase):
         """
         self.ndim = 2
         super().__init__(config)
+
+@register_pytree_node_class
+class Mesh3D(_MeshBase):
+    """3D Mesh class with nodes, elements, and particles."""
+
+    def __init__(self, config: dict):
+        """Initialize a 3D Mesh.
+
+        Parameters
+        ----------
+        config: dict
+            Configuration to be used for initialization. It _should_
+            contain `elements` and `particles` keys.
+        """
+        self.ndim = 3
+        super().__init__(config)

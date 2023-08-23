@@ -16,7 +16,7 @@ type = "MPMExplicit"
 dimension = 2
 scheme = "usf"
 dt = 0.01
-nsteps = 10
+nsteps = 2
 velocity_update = false
 
 [output]
@@ -52,7 +52,7 @@ type = "LinearElastic"
 [[particles]]
 file = "particles-2d-uniaxial-stress.json"
 material_id = 0
-init_velocity = [1.0, 0.0]
+init_velocity = [0.0, 0.0]
 
 [external_loading]
 gravity = [0, 0]

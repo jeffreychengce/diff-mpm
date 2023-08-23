@@ -45,3 +45,10 @@ class MPM:
             self._config.parsed_config["external_loading"]["gravity"],
         )
         return arrays
+
+    def solve_no_jit(self):
+        """Solve the MPM simulation."""
+        arrays = self.solver.solve(
+            self._config.parsed_config["external_loading"]["gravity"],
+        )
+        return arrays
