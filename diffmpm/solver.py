@@ -224,3 +224,145 @@ class MPMExplicit:
             ).squeeze()
         arrays['nodal_velocity'] = self.mesh.elements.nodes.velocity
         return arrays
+    
+    def solve_jit_history(self, gravity: ArrayLike) -> dict:
+        """Solver method that runs the simulation.
+
+        This method runs the entire simulation for the defined number
+        of steps.
+
+        Parameters
+        ----------
+        gravity: ArrayLike
+            Gravity present in the system. This should be an array equal
+            with shape `(1, ndim)` where `ndim` is the dimension of the
+            simulation.
+
+        Returns
+        -------
+        dict
+            A dictionary of `jax.numpy` arrays corresponding to the
+            final state of the simulation after completing all steps.
+        """
+
+        num_particles = self.mesh.particles[0].loc.shape[0]
+        histories = { 
+            'loc' : jnp.zeros((self.sim_steps, num_particles, self.mesh.ndim)),
+            'velocity' : jnp.zeros((self.sim_steps, num_particles, self.mesh.ndim)),
+            'stress' : jnp.zeros((self.sim_steps, num_particles, 6)),
+            'strain' : jnp.zeros((self.sim_steps, num_particles, 6))
+        }
+        
+        def _step(i, data):
+            self, histories = data
+            self.mpm_scheme.compute_nodal_kinematics()
+            self.mpm_scheme.precompute_stress_strain()
+            self.mpm_scheme.compute_forces(gravity, i)
+            self.mpm_scheme.compute_particle_kinematics()
+            self.mpm_scheme.postcompute_stress_strain()
+
+            curr_loc = jnp.array([getattr(p, 'loc') for p in self.mesh.particles]).squeeze(axis=2)
+            curr_vel = jnp.array([getattr(p, 'velocity') for p in self.mesh.particles]).squeeze(axis=2)
+            curr_stress = jnp.array([getattr(p, 'stress') for p in self.mesh.particles]).squeeze(axis=3)
+            curr_strain = jnp.array([getattr(p, 'strain') for p in self.mesh.particles]).squeeze(axis=3)
+
+            histories['loc'] = lax.dynamic_update_slice(histories['loc'], curr_loc, (i, num_particles, num_particles))
+            histories['velocity'] = lax.dynamic_update_slice(histories['velocity'], curr_vel, (i, num_particles, num_particles))
+            histories['stress'] = lax.dynamic_update_slice(histories['stress'], curr_stress, (i, num_particles, num_particles))
+            histories['strain'] = lax.dynamic_update_slice(histories['strain'], curr_strain, (i, num_particles, num_particles))
+            
+            return self, histories
+
+        _, histories = lax.fori_loop(0, self.sim_steps, _step, (self, histories))
+        return histories
+    
+
+
+    # def solve_jit_history(self, gravity: ArrayLike) -> dict:
+    #     """Solver method that runs the simulation.
+
+    #     This method runs the entire simulation for the defined number
+    #     of steps.
+
+    #     Parameters
+    #     ----------
+    #     gravity: ArrayLike
+    #         Gravity present in the system. This should be an array equal
+    #         with shape `(1, ndim)` where `ndim` is the dimension of the
+    #         simulation.
+
+    #     Returns
+    #     -------
+    #     dict
+    #         A dictionary of `jax.numpy` arrays corresponding to the
+    #         states.
+    #     """
+
+
+    #     def _step(i, data):
+    #         self, arrays = data
+    #         self.mpm_scheme.compute_nodal_kinematics()
+    #         self.mpm_scheme.precompute_stress_strain()
+    #         self.mpm_scheme.compute_forces(gravity, i)
+    #         self.mpm_scheme.compute_particle_kinematics()
+    #         self.mpm_scheme.postcompute_stress_strain()
+
+    #         for name in self.__particle_props:
+    #             if len(arrays[name]) != 1:
+    #                 print(arrays[name])
+    #                 arrays[name] = jnp.concatenate(
+    #                     (
+    #                         arrays[name],
+    #                         [
+    #                             getattr(self.mesh.particles[j], name)
+    #                             for j in range(len(self.mesh.particles))
+    #                         ],
+    #                     ),
+    #                     axis=1
+    #                 )
+    #             else:
+    #                 print('2')
+    #                 arrays[name] = jnp.array(
+    #                     [
+    #                         getattr(self.mesh.particles[j], name)
+    #                         for j in range(len(self.mesh.particles))
+    #                     ]
+    #                 )
+
+
+    #         def _write(self, i):
+    #             arrays = {}
+    #             for name in self.__particle_props:
+    #                 arrays[name] = jnp.array(
+    #                     [
+    #                         getattr(self.mesh.particles[j], name).squeeze()
+    #                         for j in range(len(self.mesh.particles))
+    #                     ]
+    #                 )
+    #             self._jax_writer(
+    #                 functools.partial(
+    #                     self.writer_func, out_dir=self.out_dir, max_steps=self.sim_steps
+    #                 ),
+    #                 (arrays, i),
+    #             )
+
+    #         if self.writer_func is not None:
+    #             lax.cond(
+    #                 i % self.out_steps == 0,
+    #                 _write,
+    #                 lambda s, i: None,
+    #                 self,
+    #                 i,
+    #             )
+    #         return self, arrays
+        
+    #     arrays = {
+    #         'loc': jnp.zeros((1,1,1,1)), 
+    #         'velocity': jnp.zeros((1,1,1,1)),
+    #         'stress': jnp.zeros((1,1,1,1)),
+    #         'strain': jnp.zeros((1,1,1,1))
+    #         }
+
+    #     self, arrays = lax.fori_loop(0, self.sim_steps, _step, (self, arrays))
+
+    #     return arrays
